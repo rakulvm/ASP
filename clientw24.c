@@ -17,12 +17,21 @@ void error(const char *msg) {
 
 // Function to check if the command is valid
 int isValidCommand(const char *cmd) {
-    const char *validCommands[] = {"dirlist -a", "quitc", "dirlist -t", NULL}; 
+    // Updated list of commands without w24fn since we'll check it separately
+    const char *validCommands[] = {"dirlist -a", "quitc", "dirlist -t", NULL};
+
+    // Check fixed commands
     for (int i = 0; validCommands[i] != NULL; i++) {
         if (strcmp(cmd, validCommands[i]) == 0) {
             return 1; // Command is valid
         }
     }
+    
+    // Check if the command starts with "w24fn " (note the space after w24fn)
+    if (strncmp(cmd, "w24fn ", 6) == 0) {
+        return 1; // Command is valid if it starts with "w24fn "
+    }
+
     return 0; // Command is not valid
 }
 
@@ -55,23 +64,26 @@ int main(int argc, char *argv[]) {
     if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) 
         error("ERROR connecting");
 
+    // Inside your main while loop, you already send any input to the server:
     while (1) {
         printf("$clientw24: ");
         bzero(buffer, BUFFER_SIZE);
         fgets(buffer, BUFFER_SIZE - 1, stdin);
-        buffer[strcspn(buffer, "\n")] = 0; // Remove newline character from the
+        buffer[strcspn(buffer, "\n")] = 0; // Remove newline character from the end
         
-                if (!isValidCommand(buffer)) {
+        if (!isValidCommand(buffer)) {
             printf("Invalid command.\n");
-            continue;
+            continue; // Skip sending invalid command
         }
 
+        // Send valid command to the server
         n = write(sockfd, buffer, strlen(buffer));
         if (n < 0) error("ERROR writing to socket");
 
-        if (strncmp(buffer, "quitc", 5) == 0) break; // Quit command issued
+        // Quit command issued by client
+        if (strncmp(buffer, "quitc", 5) == 0) break;
 
-        // Assume server sends all response data for a command at once:
+        // Print server's response
         do {
             bzero(buffer, BUFFER_SIZE);
             n = read(sockfd, buffer, BUFFER_SIZE - 1);
@@ -80,14 +92,12 @@ int main(int argc, char *argv[]) {
             }
         } while (n > 0);  // Continue reading until no more data
 
-        // After reading from the socket, check if the message is "END"
         if (strcmp(buffer, "END") == 0) {
-            break;
+            continue; // Prepare for next command
         }
 
         if (n < 0 && errno != EAGAIN) error("ERROR reading from socket");
-    }
-
+        }
     close(sockfd);
     return 0;
 }
