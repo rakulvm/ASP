@@ -9,94 +9,83 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <sys/wait.h> // Include this header to resolve the warning
+#include <ctype.h>  // For tolower function in sorting comparison
 
 #define BUFFER_SIZE 256
 #define PORT_NO 2024
+#define MAX_DIRS 512  // Maximum number of directories we will handle
+
 
 void error(const char *msg) {
     perror(msg);
     exit(1);
 }
 
+int dir_cmp(const void *a, const void *b) {
+    // Comparison function for qsort, comparing strings case-insensitively
+    return strcasecmp(*(const char **)a, *(const char **)b);
+}
+
 void listDirectories(int client_sock) {
-    DIR *d;
+    char *homeDir = getenv("HOME");
+    if (!homeDir) homeDir = ".";
+    DIR *d = opendir(homeDir);
     struct dirent *dir;
-    d = opendir(".");
-    char buffer[1024];
-    int n;
+    char *dirs[MAX_DIRS];  // Array to hold directory names
+    int count = 0;  // Number of directories added to dirs
+    char buffer[BUFFER_SIZE];
 
     if (d) {
-        while ((dir = readdir(d)) != NULL) {
-            if (dir->d_type == DT_DIR) { // Check if it's a directory
-                snprintf(buffer, sizeof(buffer), "%s\n", dir->d_name);
-                n = write(client_sock, buffer, strlen(buffer));
-                if (n < 0) error("ERROR writing to socket");
+        while ((dir = readdir(d)) != NULL && count < MAX_DIRS) {
+            if (dir->d_type == DT_DIR) {  // Check if it's a directory
+                dirs[count] = strdup(dir->d_name);  // Duplicate and store the name
+                if (dirs[count] == NULL) {  // Check for allocation failure
+                    error("Failed to allocate memory for directory name");
+                }
+                count++;
             }
         }
         closedir(d);
+
+        // Now, sort the directory names
+        qsort(dirs, count, sizeof(char *), dir_cmp);
+
+        // Send each directory name
+        for (int i = 0; i < count; i++) {
+            snprintf(buffer, sizeof(buffer), "%s\n", dirs[i]);
+            if (write(client_sock, buffer, strlen(buffer)) < 0) error("ERROR writing to socket");
+            free(dirs[i]);  // Free the duplicated directory name
+        }
+
     } else {
         // Could not open directory
-        n = write(client_sock, "ERROR opening directory\n", 25);
-        if (n < 0) error("ERROR writing to socket");
+        if (write(client_sock, "ERROR opening directory\n", 25) < 0) error("ERROR writing to socket");
     }
 
-    // Signal end of directory list
-    snprintf(buffer, sizeof(buffer), "\n");
-    n = write(client_sock, buffer, strlen(buffer));
-    if (n < 0) error("ERROR writing to socket");
-}
-
-
-// Function to list files in the directory
-void listFiles(int sock, char *dir, int alphabetical) {
-    DIR *d;
-    struct dirent *dir_entry;
-    char response[BUFFER_SIZE];
-    int res_size;
-    d = opendir(dir);
-
-    if (!d) {
-        sprintf(response, "Failed to open directory: %s\n", dir);
-        write(sock, response, strlen(response));
-        return;
-    }
-
-    while ((dir_entry = readdir(d)) != NULL) {
-        if (dir_entry->d_type == DT_REG) { // Check if it's a regular file
-            res_size = snprintf(response, BUFFER_SIZE, "%s\n", dir_entry->d_name);
-            write(sock, response, res_size);
-        }
-    }
-
-    closedir(d);
+    // End of directory list signal
+    if (write(client_sock, "\n", 1) < 0) error("ERROR writing to socket");
 }
 
 void crequest(int client_sock_fd) {
     char buffer[BUFFER_SIZE];
-    int read_status;
-
-    while (1) {
+    while (1) {  // Infinite loop to handle client commands
         bzero(buffer, BUFFER_SIZE);
-        read_status = read(client_sock_fd, buffer, BUFFER_SIZE - 1);
-        if (read_status < 0) error("ERROR reading from socket");
+        if (read(client_sock_fd, buffer, BUFFER_SIZE - 1) < 0) error("ERROR reading from socket");
 
         if (strncmp(buffer, "quitc", 5) == 0) {
             printf("Client has requested to close the connection.\n");
-            break;
+            break;  // Exit loop and end child process
         }
 
-        // Handle listing files
-        if (strncmp(buffer, "listfiles", 9) == 0) {
-            listFiles(client_sock_fd, ".", 1); // List files in current directory
-        } else if (strncmp(buffer, "dirlist -a", 10) == 0) {
+        if (strncmp(buffer, "dirlist -a", 10) == 0) {
             listDirectories(client_sock_fd);
         } else {
-            char *errmsg_unsupported = "Unsupported operation\n";
-            write(client_sock_fd, errmsg_unsupported, strlen(errmsg_unsupported));
+            // Handle other commands similarly
+            if (write(client_sock_fd, "Unsupported operation\n", 23) < 0) error("ERROR writing to socket");
         }
     }
-
-    close(client_sock_fd);
+    close(client_sock_fd);  // Close client socket when done
 }
 
 void signalHandler(int signum) {
@@ -108,7 +97,7 @@ int main(void) {
     socklen_t clilen;
     struct sockaddr_in serv_addr, cli_addr;
 
-    signal(SIGCHLD, signalHandler);
+    signal(SIGCHLD, signalHandler); // To avoid zombie processes
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) error("ERROR opening socket");
@@ -118,29 +107,28 @@ int main(void) {
     serv_addr.sin_addr.s_addr = INADDR_ANY;
     serv_addr.sin_port = htons(PORT_NO);
 
-    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
-        error("ERROR on binding");
+    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) error("ERROR on binding");
 
     listen(sockfd, 5);
     clilen = sizeof(cli_addr);
 
-    while (1) {
+    while (1) { // Main loop to accept connections
         newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
         if (newsockfd < 0) error("ERROR on accept");
 
         pid_t pid = fork();
-        if (pid < 0) error("ERROR on fork");    
+        if (pid < 0) error("ERROR on fork");
 
-        if (pid == 0) {
-            close(sockfd);
-            crequest(newsockfd);
-            exit(0);
+        if (pid == 0) { // Child process
+            close(sockfd); // Close listening socket in child
+            crequest(newsockfd); // Handle client request
+            exit(0); // Exit child process when done
         } else {
-            close(newsockfd);
+            close(newsockfd); // Close connected socket in parent
         }
+        write(newsockfd, "END", 3);
     }
-
-    close(sockfd);
-    return 0; 
+    close(sockfd); // This line is actually never reached
+    return 0;
 }
-
+//server
