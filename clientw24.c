@@ -17,7 +17,7 @@ void error(const char *msg) {
 
 // Function to check if the command is valid
 int isValidCommand(const char *cmd) {
-    const char *validCommands[] = {"dirlist -a", "quitc", NULL}; 
+    const char *validCommands[] = {"dirlist -a", "quitc", "dirlist -t", NULL}; 
     for (int i = 0; validCommands[i] != NULL; i++) {
         if (strcmp(cmd, validCommands[i]) == 0) {
             return 1; // Command is valid

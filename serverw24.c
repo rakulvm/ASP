@@ -11,61 +11,82 @@
 #include <fcntl.h>
 #include <sys/wait.h> // Include this header to resolve the warning
 #include <ctype.h>  // For tolower function in sorting comparison
+#include <time.h>
 
 #define BUFFER_SIZE 256
 #define PORT_NO 2024
 #define MAX_DIRS 512  // Maximum number of directories we will handle
 
+typedef struct {
+    char *name;
+    time_t mod_time; // Last modification time
+} DirEntry;
 
 void error(const char *msg) {
     perror(msg);
     exit(1);
 }
 
-int dir_cmp(const void *a, const void *b) {
-    // Comparison function for qsort, comparing strings case-insensitively
-    return strcasecmp(*(const char **)a, *(const char **)b);
+int dir_time_cmp(const void *a, const void *b) {
+    time_t time_a = (*(DirEntry **)a)->mod_time;
+    time_t time_b = (*(DirEntry **)b)->mod_time;
+    return (time_a > time_b) - (time_a < time_b); // Older first
 }
 
-void listDirectories(int client_sock) {
+int dir_cmp(const void *a, const void *b) {
+    // Assuming this is the missing alphabetical comparison function
+    return strcasecmp((*(DirEntry **)a)->name, (*(DirEntry **)b)->name);
+}
+
+void listDirectories(int client_sock_fd, int sort_by_time) {
     char *homeDir = getenv("HOME");
     if (!homeDir) homeDir = ".";
+    
     DIR *d = opendir(homeDir);
     struct dirent *dir;
-    char *dirs[MAX_DIRS];  // Array to hold directory names
-    int count = 0;  // Number of directories added to dirs
-    char buffer[BUFFER_SIZE];
-
+    DirEntry *entries[MAX_DIRS];  // Replacing 'dirs' with 'entries' for direct storing
+    int count = 0;  // Initialize 'count'
+    char buffer[BUFFER_SIZE];  // Declare 'buffer' within function
+    
+    struct stat dir_stat;
+    
     if (d) {
         while ((dir = readdir(d)) != NULL && count < MAX_DIRS) {
             if (dir->d_type == DT_DIR) {  // Check if it's a directory
-                dirs[count] = strdup(dir->d_name);  // Duplicate and store the name
-                if (dirs[count] == NULL) {  // Check for allocation failure
-                    error("Failed to allocate memory for directory name");
+                // Allocate and initialize a new DirEntry
+                entries[count] = malloc(sizeof(DirEntry));
+                entries[count]->name = strdup(dir->d_name);  // Store name
+                char full_path[BUFFER_SIZE];
+                snprintf(full_path, sizeof(full_path), "%s/%s", homeDir, dir->d_name);
+                if (stat(full_path, &dir_stat) == 0) {
+                    entries[count]->mod_time = dir_stat.st_mtime;  // Store mod time
+                } else {
+                    entries[count]->mod_time = 0;
                 }
                 count++;
             }
         }
         closedir(d);
 
-        // Now, sort the directory names
-        qsort(dirs, count, sizeof(char *), dir_cmp);
+        // Sort based on the flag 'sort_by_time'
+        qsort(entries, count, sizeof(DirEntry *), sort_by_time ? dir_time_cmp : dir_cmp);
 
-        // Send each directory name
+        // Send sorted directory names to the client
         for (int i = 0; i < count; i++) {
-            snprintf(buffer, sizeof(buffer), "%s\n", dirs[i]);
-            if (write(client_sock, buffer, strlen(buffer)) < 0) error("ERROR writing to socket");
-            free(dirs[i]);  // Free the duplicated directory name
+            snprintf(buffer, BUFFER_SIZE, "%s\n", entries[i]->name);
+            if (write(client_sock_fd, buffer, strlen(buffer)) < 0) error("ERROR writing to socket");
+            free(entries[i]->name);  // Free name inside DirEntry
+            free(entries[i]);       // Free DirEntry itself
         }
-
     } else {
         // Could not open directory
-        if (write(client_sock, "ERROR opening directory\n", 25) < 0) error("ERROR writing to socket");
+        if (write(client_sock_fd, "ERROR opening directory\n", 25) < 0) error("ERROR writing to socket");
     }
 
     // End of directory list signal
-    if (write(client_sock, "\n", 1) < 0) error("ERROR writing to socket");
+    if (write(client_sock_fd, "\n", 1) < 0) error("ERROR writing to socket");
 }
+
 
 void crequest(int client_sock_fd) {
     char buffer[BUFFER_SIZE];
@@ -79,8 +100,10 @@ void crequest(int client_sock_fd) {
         }
 
         if (strncmp(buffer, "dirlist -a", 10) == 0) {
-            listDirectories(client_sock_fd);
-        } else {
+        listDirectories(client_sock_fd, 0); // 0 for sorting alphabetically
+    } else if (strncmp(buffer, "dirlist -t", 10) == 0) {
+        listDirectories(client_sock_fd, 1); // 1 for sorting by time
+    } else {
             // Handle other commands similarly
             if (write(client_sock_fd, "Unsupported operation\n", 23) < 0) error("ERROR writing to socket");
         }
