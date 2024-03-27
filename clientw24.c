@@ -31,6 +31,10 @@ int isValidCommand(const char *cmd) {
     if (strncmp(cmd, "w24fn ", 6) == 0) {
         return 1; // Command is valid if it starts with "w24fn "
     }
+    
+    if (strncmp(cmd, "w24fz ", 6) == 0) {
+        return 1; // Command is valid if it starts with "w24fn "
+    }
 
     return 0; // Command is not valid
 }

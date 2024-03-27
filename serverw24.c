@@ -15,10 +15,13 @@
 #include <ctype.h>
 #include <time.h>
 #include <ftw.h>  // For nftw
+#include <glob.h>   // For glob() function
 
 #define BUFFER_SIZE 256
 #define PORT_NO 2024
 #define MAX_DIRS 512
+
+static FILE* tarFile;
 
 typedef struct {
     char *name;
@@ -144,6 +147,83 @@ void sendFileInfo(int client_sock_fd, char *filename) {
     write(client_sock_fd, "END\n", 4);
 }
 
+// Callback function for nftw
+static int addToFileList(const char* fpath, const struct stat* sb, int typeflag, struct FTW* ftwbuf) {
+    // Only consider regular files
+    if (typeflag == FTW_F) {
+        long size = (long)sb->st_size;
+        long size1 = 1000; // Example size range, replace with your variables
+        long size2 = 5000;
+
+        if (size >= size1 && size <= size2) {
+            // Append file path to tar command
+            fprintf(tarFile, "%s\n", fpath);
+        }
+    }
+    return 0; // Continue walking the tree
+}
+
+// Function to create tar.gz for files within size range
+int createTarGzForSizeRange(long size1, long size2, const char* outputPath) {
+    char fileListPath[] = "/tmp/filelist.txt";
+    tarFile = fopen(fileListPath, "w");
+    if (!tarFile) {
+        perror("Failed to open file list");
+        return -1;
+    }
+
+    // Walk the file tree starting from home directory
+    char* homeDir = getenv("HOME");
+    nftw(homeDir, addToFileList, 20, 0);
+
+    fclose(tarFile);
+
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "tar -czf %s -T %s", outputPath, fileListPath);
+    system(cmd); // Execute tar command
+
+    unlink(fileListPath); // Clean up file list
+
+    return 0;
+}
+
+void sendFile(int sock_fd, const char* filePath) {
+    int file_fd = open(filePath, O_RDONLY);
+    if (file_fd < 0) {
+        perror("Failed to open file");
+        return;
+    }
+
+    char buffer[1024];
+    ssize_t bytesRead;
+    while ((bytesRead = read(file_fd, buffer, sizeof(buffer))) > 0) {
+        if (write(sock_fd, buffer, bytesRead) < 0) {
+            perror("Failed to send file");
+            break;
+        }
+    }
+    close(file_fd);
+    
+    // Indicate the end of the file transfer
+    write(sock_fd, "END\n", 4);
+}
+
+void handleW24fzCommand(int client_sock_fd, long size1, long size2) {
+    // Implement the file search logic here and create a tar.gz file
+    // For simplicity, let's assume you have a function that does this:
+    int result = createTarGzForSizeRange(size1, size2, "temp.tar.gz");
+    
+    if (result == 0) { // Assume 0 means success
+        // Send the tar.gz file
+        sendFile(client_sock_fd, "temp.tar.gz");
+    } else {
+        // Send "No file found" message
+        const char *msg = "No file found\n";
+        write(client_sock_fd, msg, strlen(msg));
+        write(client_sock_fd, "END\n", 4);
+    }
+}
+
 void crequest(int client_sock_fd) {
     char buffer[BUFFER_SIZE];
     while (1) {  // Infinite loop to handle client commands
@@ -163,6 +243,15 @@ void crequest(int client_sock_fd) {
             char filename[BUFFER_SIZE];
             strcpy(filename, buffer + 6); // Get the filename from the command
             sendFileInfo(client_sock_fd, filename);
+        }  else if (strncmp(buffer, "w24fz ", 6) == 0) {
+            long size1, size2;
+            if (sscanf(buffer + 6, "%ld %ld", &size1, &size2) == 2 && size1 <= size2) {
+                handleW24fzCommand(client_sock_fd, size1, size2);
+            } else {
+                const char *msg = "Invalid size range\n";
+                write(client_sock_fd, msg, strlen(msg));
+                write(client_sock_fd, "END\n", 4);
+            }
         } else {
             // Handle other commands similarly
             if (write(client_sock_fd, "Unsupported operation\n", 23) < 0) error("ERROR writing to socket");
