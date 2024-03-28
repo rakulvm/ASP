@@ -106,24 +106,12 @@ void listDirectories(int client_sock_fd, int sort_by_time) {
     if (write(client_sock_fd, "\n", 1) < 0) error("ERROR writing to socket");
 }
 
-// nftw callback function
-static int fileCallback(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
-    if (typeflag == FTW_F && strcmp(fileInfo.path, fpath + ftwbuf->base) == 0) {
-        strncpy(fileInfo.path, fpath, BUFFER_SIZE);  // Store the full path of the found file
-        fileInfo.found = 1;  // Mark as found
-        return 1;  // Stop walking the directory tree
-    }
-    return 0;  // Continue walking
-}
-
 void sendFileInfo(int client_sock_fd, char *filename) {
     strncpy(fileInfo.path, filename, BUFFER_SIZE); // Copy filename to global structure
     fileInfo.found = 0;  // Reset found flag
 
     char *homeDir = getenv("HOME");
     if (!homeDir) homeDir = ".";
-
-    nftw(homeDir, fileCallback, 20, 0);  // Start the walk at the home directory
 
     if (fileInfo.found) {
         struct stat file_stat;
@@ -147,82 +135,89 @@ void sendFileInfo(int client_sock_fd, char *filename) {
     write(client_sock_fd, "END\n", 4);
 }
 
-// Callback function for nftw
-static int addToFileList(const char* fpath, const struct stat* sb, int typeflag, struct FTW* ftwbuf) {
-    // Only consider regular files
-    if (typeflag == FTW_F) {
-        long size = (long)sb->st_size;
-        long size1 = 1000; // Example size range, replace with your variables
-        long size2 = 5000;
+/*void packFilesInRange(int client_sock_fd, long size1, long size2) {
+    char *homeDir = getenv("HOME");
+    if (!homeDir) homeDir = ".";
 
-        if (size >= size1 && size <= size2) {
-            // Append file path to tar command
-            fprintf(tarFile, "%s\n", fpath);
-        }
-    }
-    return 0; // Continue walking the tree
-}
+    char command[BUFFER_SIZE * 3];
+snprintf(command, sizeof(command),
+         "find %s -type f \\( -size +%ldc -a -size -%ldc \\) -print0 | tar --null -czvf temp.tar.gz --files-from=-",
+         homeDir, size1 - 1, size2 + 1);    
 
-// Function to create tar.gz for files within size range
-int createTarGzForSizeRange(long size1, long size2, const char* outputPath) {
-    char fileListPath[] = "/tmp/filelist.txt";
-    tarFile = fopen(fileListPath, "w");
-    if (!tarFile) {
-        perror("Failed to open file list");
-        return -1;
-    }
-
-    // Walk the file tree starting from home directory
-    char* homeDir = getenv("HOME");
-    nftw(homeDir, addToFileList, 20, 0);
-
-    fclose(tarFile);
-
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "tar -czf %s -T %s", outputPath, fileListPath);
-    system(cmd); // Execute tar command
-
-    unlink(fileListPath); // Clean up file list
-
-    return 0;
-}
-
-void sendFile(int sock_fd, const char* filePath) {
-    int file_fd = open(filePath, O_RDONLY);
-    if (file_fd < 0) {
-        perror("Failed to open file");
+    // Execute the command and check if the tar file was created
+    int status = system(command);
+    if (status == -1) {
+        write(client_sock_fd, "Error executing command\n", 25);
         return;
     }
 
-    char buffer[1024];
-    ssize_t bytesRead;
-    while ((bytesRead = read(file_fd, buffer, sizeof(buffer))) > 0) {
-        if (write(sock_fd, buffer, bytesRead) < 0) {
-            perror("Failed to send file");
-            break;
+    // Check the size of the generated tar file
+    struct stat tar_stat;
+    if (stat("temp.tar.gz", &tar_stat) == 0) {
+        if (tar_stat.st_size > 0) {
+            char buffer[BUFFER_SIZE];
+            snprintf(buffer, sizeof(buffer), "Tar file created successfully: %ld bytes\n", tar_stat.st_size);
+            write(client_sock_fd, buffer, strlen(buffer));
+        } else {
+            write(client_sock_fd, "No file found\n", 14);
+            remove("temp.tar.gz"); // Remove the empty tar file
         }
+    } else {
+        write(client_sock_fd, "Error checking tar file\n", 25);
     }
-    close(file_fd);
-    
-    // Indicate the end of the file transfer
-    write(sock_fd, "END\n", 4);
+}*/
+
+void packFilesInRange(int client_sock_fd, long size1, long size2) {
+    char *homeDir = getenv("HOME");
+    if (!homeDir) homeDir = ".";
+
+    char w24projectDir[BUFFER_SIZE];
+    snprintf(w24projectDir, sizeof(w24projectDir), "%s/w24project", homeDir);
+
+    // Create w24project directory if it does not exist
+    mkdir(w24projectDir, 0777);
+
+    // Find files in the specified size range and copy them to the w24project directory
+    char command[BUFFER_SIZE * 4];
+    snprintf(command, sizeof(command),
+             "find %s -type f \\( -size +%ldc -a -size -%ldc \\) -exec bash -c 'cp \"$1\" \"%s/$(basename \\\"$1\\\")\"' -- {} \\;",
+             homeDir, size1 - 1, size2 + 1, w24projectDir);
+
+    int status = system(command);
+    if (status != 0) {
+        write(client_sock_fd, "Error finding or copying files\n", 31);
+        return;
+    }
+
+    // Tar the contents of w24project directory
+    snprintf(command, sizeof(command),
+             "tar -czvf %s/temp.tar.gz -C %s .",
+             homeDir, w24projectDir);
+
+    status = system(command);
+    if (status != 0) {
+        write(client_sock_fd, "Error creating tar file\n", 25);
+        return;
+    }
+
+    // Check the size of the generated tar file
+    char tarPath[BUFFER_SIZE];
+    snprintf(tarPath, sizeof(tarPath), "%s/temp.tar.gz", homeDir);
+    struct stat tar_stat;
+    if (stat(tarPath, &tar_stat) == 0) {
+        if (tar_stat.st_size > 0) {
+            char buffer[BUFFER_SIZE];
+            snprintf(buffer, sizeof(buffer), "Tar file created successfully: %ld bytes\n", tar_stat.st_size);
+            write(client_sock_fd, buffer, strlen(buffer));
+        } else {
+            write(client_sock_fd, "No file found\n", 14);
+            remove(tarPath); // Remove the empty tar file
+        }
+    } else {
+        write(client_sock_fd, "Error checking tar file\n", 25);
+    }
 }
 
-void handleW24fzCommand(int client_sock_fd, long size1, long size2) {
-    // Implement the file search logic here and create a tar.gz file
-    // For simplicity, let's assume you have a function that does this:
-    int result = createTarGzForSizeRange(size1, size2, "temp.tar.gz");
-    
-    if (result == 0) { // Assume 0 means success
-        // Send the tar.gz file
-        sendFile(client_sock_fd, "temp.tar.gz");
-    } else {
-        // Send "No file found" message
-        const char *msg = "No file found\n";
-        write(client_sock_fd, msg, strlen(msg));
-        write(client_sock_fd, "END\n", 4);
-    }
-}
 
 void crequest(int client_sock_fd) {
     char buffer[BUFFER_SIZE];
@@ -243,17 +238,19 @@ void crequest(int client_sock_fd) {
             char filename[BUFFER_SIZE];
             strcpy(filename, buffer + 6); // Get the filename from the command
             sendFileInfo(client_sock_fd, filename);
-        }  else if (strncmp(buffer, "w24fz ", 6) == 0) {
+        } else if (strncmp(buffer, "w24fz ", 6) == 0) { // Check if the command is w24fz
             long size1, size2;
-            if (sscanf(buffer + 6, "%ld %ld", &size1, &size2) == 2 && size1 <= size2) {
-                handleW24fzCommand(client_sock_fd, size1, size2);
+            if (sscanf(buffer + 6, "%ld %ld", &size1, &size2) == 2) {
+                if (size1 > 0 && size2 >= size1) {
+                    packFilesInRange(client_sock_fd, size1, size2);
+                } else {
+                    write(client_sock_fd, "Invalid size range\n", 20);
+                }
             } else {
-                const char *msg = "Invalid size range\n";
-                write(client_sock_fd, msg, strlen(msg));
-                write(client_sock_fd, "END\n", 4);
+                write(client_sock_fd, "Invalid command format\n", 24);
             }
-        } else {
-            // Handle other commands similarly
+        }
+        else {
             if (write(client_sock_fd, "Unsupported operation\n", 23) < 0) error("ERROR writing to socket");
         }
     }
