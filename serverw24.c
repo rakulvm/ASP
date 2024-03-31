@@ -135,38 +135,6 @@ void sendFileInfo(int client_sock_fd, char *filename) {
     write(client_sock_fd, "END\n", 4);
 }
 
-/*void packFilesInRange(int client_sock_fd, long size1, long size2) {
-    char *homeDir = getenv("HOME");
-    if (!homeDir) homeDir = ".";
-
-    char command[BUFFER_SIZE * 3];
-snprintf(command, sizeof(command),
-         "find %s -type f \\( -size +%ldc -a -size -%ldc \\) -print0 | tar --null -czvf temp.tar.gz --files-from=-",
-         homeDir, size1 - 1, size2 + 1);    
-
-    // Execute the command and check if the tar file was created
-    int status = system(command);
-    if (status == -1) {
-        write(client_sock_fd, "Error executing command\n", 25);
-        return;
-    }
-
-    // Check the size of the generated tar file
-    struct stat tar_stat;
-    if (stat("temp.tar.gz", &tar_stat) == 0) {
-        if (tar_stat.st_size > 0) {
-            char buffer[BUFFER_SIZE];
-            snprintf(buffer, sizeof(buffer), "Tar file created successfully: %ld bytes\n", tar_stat.st_size);
-            write(client_sock_fd, buffer, strlen(buffer));
-        } else {
-            write(client_sock_fd, "No file found\n", 14);
-            remove("temp.tar.gz"); // Remove the empty tar file
-        }
-    } else {
-        write(client_sock_fd, "Error checking tar file\n", 25);
-    }
-}*/
-
 void packFilesInRange(int client_sock_fd, long size1, long size2) {
     char *homeDir = getenv("HOME");
     if (!homeDir) homeDir = ".";
@@ -180,12 +148,12 @@ void packFilesInRange(int client_sock_fd, long size1, long size2) {
     // Find files in the specified size range and copy them to the w24project directory
     char command[BUFFER_SIZE * 4];
     snprintf(command, sizeof(command),
-             "find %s -type f \\( -size +%ldc -a -size -%ldc \\) -exec bash -c 'cp \"$1\" \"%s/$(basename \\\"$1\\\")\"' -- {} \\;",
-             homeDir, size1 - 1, size2 + 1, w24projectDir);
+         "tar -czvf %s/temp.tar.gz -C %s .",
+         w24projectDir, w24projectDir); // The tar file will be created inside w24project
 
     int status = system(command);
     if (status != 0) {
-        write(client_sock_fd, "Error finding or copying files\n", 31);
+        write(client_sock_fd, "Error creating tar file\n", 25);
         return;
     }
 
@@ -202,7 +170,7 @@ void packFilesInRange(int client_sock_fd, long size1, long size2) {
 
     // Check the size of the generated tar file
     char tarPath[BUFFER_SIZE];
-    snprintf(tarPath, sizeof(tarPath), "%s/temp.tar.gz", homeDir);
+    snprintf(tarPath, sizeof(tarPath), "%s/temp.tar.gz", w24projectDir); // Path to tar file in w24project
     struct stat tar_stat;
     if (stat(tarPath, &tar_stat) == 0) {
         if (tar_stat.st_size > 0) {
@@ -210,14 +178,13 @@ void packFilesInRange(int client_sock_fd, long size1, long size2) {
             snprintf(buffer, sizeof(buffer), "Tar file created successfully: %ld bytes\n", tar_stat.st_size);
             write(client_sock_fd, buffer, strlen(buffer));
         } else {
-            write(client_sock_fd, "No file found\n", 14);
+            write(client_sock_fd, "No file found or empty tar file\n", 32);
             remove(tarPath); // Remove the empty tar file
         }
     } else {
         write(client_sock_fd, "Error checking tar file\n", 25);
     }
 }
-
 
 void crequest(int client_sock_fd) {
     char buffer[BUFFER_SIZE];
