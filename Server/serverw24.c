@@ -16,6 +16,7 @@
 #include <time.h>
 #include <ftw.h>  // For nftw
 #include <glob.h>   // For glob() function
+#include <utime.h>
 
 #define BUFFER_SIZE 256
 #define PORT_NO 2024
@@ -352,6 +353,169 @@ void packFilesBySize(int client_sock_fd, long size1, long size2) {
     write(client_sock_fd, notification, strlen(notification));
 }
 
+// Helper function to check if file's modification date is less than or equal to given date
+int isFileOlderThan(struct stat *file_stat, struct tm *given_date) {
+    struct tm *file_date = gmtime(&(file_stat->st_mtime)); // Convert to GMT for comparison
+    return difftime(mktime(file_date), mktime(given_date)) <= 0;
+}
+
+// Function to handle the 'w24fdb <date>' command
+void packFilesByDate(int client_sock_fd, const char *date) {
+    char w24projectDir[BUFFER_SIZE];
+    char fileListPath[BUFFER_SIZE];
+    char tarFilePath[BUFFER_SIZE];
+    FILE *fp;
+    int status;
+
+    snprintf(w24projectDir, sizeof(w24projectDir), "%s/w24project", getenv("HOME") ? getenv("HOME") : ".");
+    snprintf(fileListPath, sizeof(fileListPath), "%s/filelist.txt", w24projectDir);
+    snprintf(tarFilePath, sizeof(tarFilePath), "%s/temp.tar.gz", w24projectDir);
+
+    // Create w24project directory if it does not exist
+    if (createDirectory(w24projectDir) != 0) {
+        write(client_sock_fd, "Failed to create project directory.\n", 35);
+        return;
+    }
+
+    // Cleanup previous files if exist
+    unlink(tarFilePath);
+    unlink(fileListPath);
+
+    // Parse the given date
+    struct tm given_date;
+    memset(&given_date, 0, sizeof(struct tm));
+    strptime(date, "%Y-%m-%d", &given_date);
+    time_t given_time = mktime(&given_date);
+
+    // Execute the find command and write the file names to fileListPath
+    char findCommand[BUFFER_SIZE * 3];
+    snprintf(findCommand, sizeof(findCommand), "find ~ -type f -printf '%%T@ %%p\\n'");
+    fp = popen(findCommand, "r");
+    if (fp == NULL) {
+        write(client_sock_fd, "Failed to execute find command.\n", 31);
+        return;
+    }
+
+    // Open the file list to write
+    FILE *fileList = fopen(fileListPath, "w");
+    if (fileList == NULL) {
+        pclose(fp);
+        write(client_sock_fd, "Failed to create file list.\n", 28);
+        return;
+    }
+
+    // Read the output from find, parse it, and write to fileList
+    char line[BUFFER_SIZE];
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        double epoch_time;
+        char file_path[BUFFER_SIZE];
+        if (sscanf(line, "%lf %s", &epoch_time, file_path) == 2) {
+            if (epoch_time <= (double)given_time) {
+                fprintf(fileList, "%s\n", file_path);
+            }
+        }
+    }
+    fclose(fileList);
+    pclose(fp);
+
+    // Prepare the tar command
+    char tarCommand[BUFFER_SIZE * 3];
+    snprintf(tarCommand, sizeof(tarCommand),
+             "tar --transform 's#.*/##' -czf %s -T %s",
+             tarFilePath, fileListPath);
+
+    // Execute the tar command
+    status = system(tarCommand);
+    if (status != 0) {
+        write(client_sock_fd, "Failed to pack files into tar.\n", 30);
+        return;
+    }
+
+    // Notify the client of successful tar file creation
+    char notification[BUFFER_SIZE];
+    snprintf(notification, sizeof(notification), "Files packed into %s\n", tarFilePath);
+    write(client_sock_fd, notification, strlen(notification));
+}
+
+// Function to handle the 'w24fdb <date>' command
+void packFilesByDateGreat(int client_sock_fd, const char *date) {
+    char w24projectDir[BUFFER_SIZE];
+    char fileListPath[BUFFER_SIZE];
+    char tarFilePath[BUFFER_SIZE];
+    FILE *fp;
+    int status;
+
+    snprintf(w24projectDir, sizeof(w24projectDir), "%s/w24project", getenv("HOME") ? getenv("HOME") : ".");
+    snprintf(fileListPath, sizeof(fileListPath), "%s/filelist.txt", w24projectDir);
+    snprintf(tarFilePath, sizeof(tarFilePath), "%s/temp.tar.gz", w24projectDir);
+
+    // Create w24project directory if it does not exist
+    if (createDirectory(w24projectDir) != 0) {
+        write(client_sock_fd, "Failed to create project directory.\n", 35);
+        return;
+    }
+
+    // Cleanup previous files if exist
+    unlink(tarFilePath);
+    unlink(fileListPath);
+
+    // Parse the given date
+    struct tm given_date;
+    memset(&given_date, 0, sizeof(struct tm));
+    strptime(date, "%Y-%m-%d", &given_date);
+    time_t given_time = mktime(&given_date);
+
+    // Execute the find command and write the file names to fileListPath
+    char findCommand[BUFFER_SIZE * 3];
+    snprintf(findCommand, sizeof(findCommand), "find ~ -type f -printf '%%T@ %%p\\n'");
+    fp = popen(findCommand, "r");
+    if (fp == NULL) {
+        write(client_sock_fd, "Failed to execute find command.\n", 31);
+        return;
+    }
+
+    // Open the file list to write
+    FILE *fileList = fopen(fileListPath, "w");
+    if (fileList == NULL) {
+        pclose(fp);
+        write(client_sock_fd, "Failed to create file list.\n", 28);
+        return;
+    }
+
+    // Read the output from find, parse it, and write to fileList
+    char line[BUFFER_SIZE];
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        double epoch_time;
+        char file_path[BUFFER_SIZE];
+        if (sscanf(line, "%lf %s", &epoch_time, file_path) == 2) {
+            if (epoch_time >= (double)given_time) {
+                fprintf(fileList, "%s\n", file_path);
+            }
+        }
+    }
+    fclose(fileList);
+    pclose(fp);
+
+    // Prepare the tar command
+    char tarCommand[BUFFER_SIZE * 3];
+    snprintf(tarCommand, sizeof(tarCommand),
+             "tar --transform 's#.*/##' -czf %s -T %s",
+             tarFilePath, fileListPath);
+
+    // Execute the tar command
+    status = system(tarCommand);
+    if (status != 0) {
+        write(client_sock_fd, "Failed to pack files into tar.\n", 30);
+        return;
+    }
+
+    // Notify the client of successful tar file creation
+    char notification[BUFFER_SIZE];
+    snprintf(notification, sizeof(notification), "Files packed into %s\n", tarFilePath);
+    write(client_sock_fd, notification, strlen(notification));
+}
+
+
 void crequest(int client_sock_fd) {
     char buffer[BUFFER_SIZE];
     while (1) {  // Infinite loop to handle client commands
@@ -382,6 +546,32 @@ void crequest(int client_sock_fd) {
                 packFilesBySize(client_sock_fd, size1, size2);
             } else {
                 write(client_sock_fd, "Error: size1 must be less than size2.\n", 38);
+            }
+        } else if (strncmp(buffer, "w24fdb ", 7) == 0) {
+            // Extract the date string from the command
+            char dateStr[BUFFER_SIZE];
+            strncpy(dateStr, buffer + 7, BUFFER_SIZE - 7);
+
+            // Validate the date format (YYYY-MM-DD)
+            struct tm date;
+            if (strptime(dateStr, "%Y-%m-%d", &date) == NULL) {
+                write(client_sock_fd, "Invalid date format.\n", 20);
+            } else {
+                // Call the function to pack files by date
+                packFilesByDate(client_sock_fd, dateStr);
+            }
+        } else if (strncmp(buffer, "w24fda ", 7) == 0) {
+            // Extract the date string from the command
+            char dateStr[BUFFER_SIZE];
+            strncpy(dateStr, buffer + 7, BUFFER_SIZE - 7);
+
+            // Validate the date format (YYYY-MM-DD)
+            struct tm date;
+            if (strptime(dateStr, "%Y-%m-%d", &date) == NULL) {
+                write(client_sock_fd, "Invalid date format.\n", 20);
+            } else {
+                // Call the function to pack files by date
+                packFilesByDateGreat(client_sock_fd, dateStr);
             }
         } else {
             if (write(client_sock_fd, "Unsupported operation\n", 23) < 0) error("ERROR writing to socket");

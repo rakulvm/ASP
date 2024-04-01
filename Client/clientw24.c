@@ -26,20 +26,10 @@ int isValidCommand(const char *cmd) {
             return 1; // Command is valid
         }
     }
-    
     // Check if the command starts with "w24fn " (note the space after w24fn)
-    if (strncmp(cmd, "w24fn ", 6) == 0) {
+    if (strncmp(cmd, "w24fn ", 6) == 0 || strncmp(cmd, "w24ft ", 6) == 0 || strncmp(cmd, "w24fz ", 6) == 0 || strncmp(cmd, "w24fdb ", 6) == 0 || strncmp(cmd, "w24fda ", 6) == 0){
         return 1; // Command is valid if it starts with "w24fn "
     }
-    
-    if (strncmp(cmd, "w24fz ", 6) == 0) {
-        return 1; // Command is valid if it starts with "w24fn "
-    }
-    
-    if (strncmp(cmd, "w24ft ", 6) == 0) {
-        return 1; // Assuming simple validation here; you might add more complex checks for extensions
-    }
-
     return 0; // Command is not valid
 }
 
