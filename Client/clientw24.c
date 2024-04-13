@@ -83,12 +83,16 @@ int main(int argc, char *argv[]) {
 
         // Print server's response
         do {
-            bzero(buffer, BUFFER_SIZE);
-            n = read(sockfd, buffer, BUFFER_SIZE - 1);
-            if (n > 0) {
-                printf("%s", buffer);  // Print server's response
-            }
-        } while (n > 0);  // Continue reading until no more data
+	    bzero(buffer, BUFFER_SIZE);
+	    n = read(sockfd, buffer, BUFFER_SIZE - 1);
+	    if (n > 0) {
+		printf("%s", buffer);  // Print server's response
+		if (strstr(buffer, "END") != NULL) { // Look for "END" in the response
+		    break; // Exit the reading loop when "END" is found
+		}
+	    }
+	} while (n > 0);
+
 
         if (strcmp(buffer, "END") == 0) {
             continue; // Prepare for next command
