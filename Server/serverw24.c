@@ -21,6 +21,10 @@
 #define BUFFER_SIZE 256
 #define PORT_NO 2024
 #define MAX_DIRS 512
+#ifndef DT_DIR
+#define DT_DIR 4
+#endif
+
 
 #define MAX_MATCHING_FILES 1000 // Adjust based on expected server load and use case
 
@@ -46,76 +50,103 @@ struct fileInfo {
 } fileInfo;
 
 
+// Error handling function
 void error(const char *msg) {
     perror(msg);
     exit(1);
 }
 
-int dir_time_cmp(const void *a, const void *b) {
-    const DirEntry* dirA = (const DirEntry*)a;
-    const DirEntry* dirB = (const DirEntry*)b;
+// Helper function to send data through the socket
+void sendData(int client_sock_fd, const char* data) {
+    if (write(client_sock_fd, data, strlen(data)) < 0) 
+        perror("ERROR writing to socket");
+}
+
+// Comparator function for alphabetical sorting
+int alphaSort(const void* a, const void* b) {
+    const char* dirA = *(const char**)a;
+    const char* dirB = *(const char**)b;
+    return strcasecmp(dirA, dirB);
+}
+
+// Comparator for sorting directories by creation time
+int timeSort(const void *a, const void *b) {
+    DirEntry *dirA = (DirEntry *)a;
+    DirEntry *dirB = (DirEntry *)b;
     return (dirA->mod_time > dirB->mod_time) - (dirA->mod_time < dirB->mod_time);
 }
 
-int dir_cmp(const void *a, const void *b) {
-    const DirEntry* dirA = (const DirEntry*)a;
-    const DirEntry* dirB = (const DirEntry*)b;
-    return strcasecmp(dirA->name, dirB->name);
-}
+void listDirectoriesByCreationTime(int client_sock_fd) {
+    DIR *dir;
+    struct dirent *entry;
+    struct stat statbuf;
+    DirEntry directories[MAX_DIRS];
+    int dirCount = 0;
+    char buffer[BUFFER_SIZE * 2], path[BUFFER_SIZE];
+    char timeBuff[64];
 
-void listDirectories(int client_sock_fd, int sort_by_time) {
     char *homeDir = getenv("HOME");
-    if (!homeDir) homeDir = ".";
-    
-    DIR *d = opendir(homeDir);
-    struct dirent *dir;
-    DirEntry *entries[MAX_DIRS];
-    int count = 0;
-    char buffer[BUFFER_SIZE];
-    struct stat path_stat;
-    char timebuff[256]; 
-    
-    if (d) {
-        while ((dir = readdir(d)) != NULL && count < MAX_DIRS) {
-            char full_path[BUFFER_SIZE];
-            snprintf(full_path, sizeof(full_path), "%s/%s", homeDir, dir->d_name);
-            stat(full_path, &path_stat);
-            if (S_ISDIR(path_stat.st_mode)) {  // Check if it's a directory using stat
-                entries[count] = malloc(sizeof(DirEntry));
-                entries[count]->name = strdup(dir->d_name);
-                if (stat(full_path, &path_stat) == 0) {
-                    entries[count]->mod_time = path_stat.st_mtime;
-                } else {
-                    entries[count]->mod_time = 0;
-                }
-                count++;
-            }
-        }
-        closedir(d);    
-
-        // Sort based on the flag 'sort_by_time'
-        qsort(entries, count, sizeof(DirEntry *), sort_by_time ? dir_time_cmp : dir_cmp);
-
-        // Send sorted directory names to the client, include timestamps if sorting by time
-        for (int i = 0; i < count; i++) {
-            if (sort_by_time) {
-                struct tm *tm_info = localtime(&(entries[i]->mod_time));
-                strftime(timebuff, sizeof(timebuff), "%Y-%m-%d %H:%M:%S", tm_info);
-                snprintf(buffer, BUFFER_SIZE, "%s - %s\n", timebuff, entries[i]->name);
-            } else {
-                snprintf(buffer, BUFFER_SIZE, "%s\n", entries[i]->name);
-            }
-            if (write(client_sock_fd, buffer, strlen(buffer)) < 0) error("ERROR writing to socket");
-            free(entries[i]->name);
-            free(entries[i]);
-        }
-    } else {
-        // Could not open directory
-        if (write(client_sock_fd, "ERROR opening directory\n", 25) < 0) error("ERROR writing to socket");
+    if ((dir = opendir(homeDir)) == NULL) {
+        sendData(client_sock_fd, "Failed to open directory.\n");
+        return;
     }
 
-    // End of directory list signal
-    if (write(client_sock_fd, "\n", 1) < 0) error("ERROR writing to socket");
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+            snprintf(path, sizeof(path), "%s/%s", homeDir, entry->d_name);  // Generate absolute path
+            if (stat(path, &statbuf) == -1) {
+                perror("stat");
+                continue;
+            }
+            directories[dirCount].name = strdup(entry->d_name);
+            directories[dirCount].mod_time = statbuf.st_mtime;
+            dirCount++;
+            if (dirCount >= MAX_DIRS) break;
+        }
+    }
+    closedir(dir);
+
+    qsort(directories, dirCount, sizeof(DirEntry), timeSort);
+
+    for (int i = 0; i < dirCount; i++) {
+        strftime(timeBuff, sizeof(timeBuff), "%Y-%m-%d %H:%M:%S", localtime(&directories[i].mod_time));
+        snprintf(buffer, sizeof(buffer), "%-30s %s\n", timeBuff, directories[i].name);
+        sendData(client_sock_fd, buffer);
+        free(directories[i].name);
+    }
+
+    sendData(client_sock_fd, "END\n");
+}
+// Function to list directories alphabetically
+void listDirectoriesAlphabetically(int client_sock_fd) {
+    DIR* dir;
+    struct dirent* entry;
+    char* directories[MAX_DIRS];
+    int dirCount = 0;
+    char buffer[BUFFER_SIZE];
+
+    if ((dir = opendir(getenv("HOME"))) == NULL) {
+        sendData(client_sock_fd, "Failed to open directory.\n");
+        return;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_type == DT_DIR) {
+            directories[dirCount++] = strdup(entry->d_name);
+            if (dirCount >= MAX_DIRS) break;
+        }
+    }
+    closedir(dir);
+
+    qsort(directories, dirCount, sizeof(char*), alphaSort);
+
+    for (int i = 0; i < dirCount; i++) {
+        snprintf(buffer, sizeof(buffer), "%s\n", directories[i]);
+        sendData(client_sock_fd, buffer);
+        free(directories[i]);  // Free the duplicated string
+    }
+
+    sendData(client_sock_fd, "END\n");
 }
 
 
@@ -528,11 +559,11 @@ void crequest(int client_sock_fd) {
         }
 
         if (strncmp(buffer, "dirlist -a", 10) == 0) {
-            listDirectories(client_sock_fd, 0); // 0 for sorting alphabetically
-        } else if (strncmp(buffer, "dirlist -t", 10) == 0) {
-            listDirectories(client_sock_fd, 1); // 1 for sorting by time
-        } else if (strncmp(buffer, "w24fn ", 6) == 0) { // Check if the command is w24fn
-             char filename[BUFFER_SIZE];
+        	listDirectoriesAlphabetically(client_sock_fd);
+	} else if (strncmp(buffer, "dirlist -t", 10) == 0) {
+		listDirectoriesByCreationTime(client_sock_fd);
+	} else if (strncmp(buffer, "w24fn ", 6) == 0) { // Check if the command is w24fn
+	    char filename[BUFFER_SIZE];
             strncpy(filename, buffer + 6, BUFFER_SIZE); // Extract the filename from the command
             sendFileInfo(client_sock_fd, filename);
         } else if (strncmp(buffer, "w24ft ", 6) == 0) {
