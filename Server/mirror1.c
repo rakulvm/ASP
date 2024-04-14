@@ -619,16 +619,11 @@ int main(void) {
     int sockfd, newsockfd;
     socklen_t clilen;
     struct sockaddr_in serv_addr, cli_addr;
-    static int connectionCount = 0; // Keep track of the number of connections
 
     signal(SIGCHLD, signalHandler); // To avoid zombie processes
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) error("ERROR opening socket");
-    
-    int optval = 1;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
-        error("setsockopt(SO_REUSEADDR) failed");
 
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
@@ -640,35 +635,21 @@ int main(void) {
     listen(sockfd, 5);
     clilen = sizeof(cli_addr);
 
-    while (1) {
+    while (1) { // Main loop to accept connections
         newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
         if (newsockfd < 0) error("ERROR on accept");
 
-        connectionCount++; // Increment the connection counter
-        int serverToHandle = (connectionCount - 1) % 3; // This will cycle through 0, 1, 2
+        pid_t pid = fork();
+        if (pid < 0) error("ERROR on fork");
 
-        // For the first 9 connections (1-3 to serverw24, 4-6 to mirror1, 7-9 to mirror2)
-        // After that, alternate (10 to serverw24, 11 to mirror1, 12 to mirror2, and so on)
-        if (connectionCount <= 9) {
-            serverToHandle = (connectionCount - 1) / 3;
-        }
-
-        if (serverToHandle == 0) {
-            // This connection is handled by serverw24
-            pid_t pid = fork();
-            if (pid == 0) { // Child process
-                close(sockfd); // Close listening socket in child
-                crequest(newsockfd); // Handle client request
-                exit(0); // Exit child process when done
-            }
+        if (pid == 0) { // Child process
+            close(sockfd); // Close listening socket in child
+            crequest(newsockfd); // Handle client request
+            exit(0); // Exit child process when done
         } else {
-            // Redirect to the appropriate mirror based on serverToHandle
-            char mirrorMessage[BUFFER_SIZE];
-            int mirrorPort = serverToHandle == 1 ? 2025 : 2026; // Use 2025 for mirror1, 2026 for mirror2
-            snprintf(mirrorMessage, BUFFER_SIZE, "Please reconnect to mirror on port %d\n", mirrorPort);
-            write(newsockfd, mirrorMessage, strlen(mirrorMessage));
+            close(newsockfd); // Close connected socket in parent
         }
-        close(newsockfd); // Close connected socket in parent
+        write(newsockfd, "END", 3);
     }
     close(sockfd); // This line is actually never reached
     return 0;

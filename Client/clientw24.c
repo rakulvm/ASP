@@ -9,46 +9,45 @@
 #include <errno.h>
 
 #define BUFFER_SIZE 1024
+#define DEFAULT_PORT 2024
 
 void error(const char *msg) {
     perror(msg);
-    exit(1); // Exit with error status
+    exit(1);
 }
 
-// Function to check if the command is valid
 int isValidCommand(const char *cmd) {
-    // Updated list of commands without w24fn since we'll check it separately
     const char *validCommands[] = {"dirlist -a", "quitc", "dirlist -t", NULL};
 
-    // Check fixed commands
     for (int i = 0; validCommands[i] != NULL; i++) {
         if (strcmp(cmd, validCommands[i]) == 0) {
-            return 1; // Command is valid
+            return 1;
         }
     }
-    // Check if the command starts with "w24fn " (note the space after w24fn)
-    if (strncmp(cmd, "w24fn ", 6) == 0 || strncmp(cmd, "w24ft ", 6) == 0 || strncmp(cmd, "w24fz ", 6) == 0 || strncmp(cmd, "w24fdb ", 6) == 0 || strncmp(cmd, "w24fda ", 6) == 0){
-        return 1; // Command is valid if it starts with "w24fn "
+
+    if (strncmp(cmd, "w24fn ", 6) == 0 || strncmp(cmd, "w24ft ", 6) == 0 || 
+        strncmp(cmd, "w24fz ", 6) == 0 || strncmp(cmd, "w24fdb ", 6) == 0 || 
+        strncmp(cmd, "w24fda ", 6) == 0) {
+        return 1;
     }
-    return 0; // Command is not valid
+    return 0;
 }
 
 int main(int argc, char *argv[]) {
-    int sockfd, portno, n;
+    int sockfd, portno = DEFAULT_PORT, n;
     struct sockaddr_in serv_addr;
     struct hostent *server;
     char buffer[BUFFER_SIZE];
+    char *hostname = "localhost"; // Default to localhost if not specified
 
-    if (argc < 3) {
-        fprintf(stderr,"usage %s hostname port\n", argv[0]);
-        exit(1);
+    if (argc > 1) {
+        hostname = argv[1];
     }
 
-    portno = atoi(argv[2]);
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) error("ERROR opening socket");
 
-    server = gethostbyname(argv[1]);
+    server = gethostbyname(hostname);
     if (server == NULL) {
         fprintf(stderr,"ERROR, no such host\n");
         exit(1);
@@ -62,44 +61,37 @@ int main(int argc, char *argv[]) {
     if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) 
         error("ERROR connecting");
 
-    // Inside your main while loop, you already send any input to the server:
     while (1) {
         printf("$clientw24: ");
         bzero(buffer, BUFFER_SIZE);
         fgets(buffer, BUFFER_SIZE - 1, stdin);
-        buffer[strcspn(buffer, "\n")] = 0; // Remove newline character from the end
-        
+        buffer[strcspn(buffer, "\n")] = 0;
+
         if (!isValidCommand(buffer)) {
             printf("Invalid command.\n");
-            continue; // Skip sending invalid command
+            continue;
         }
 
-        // Send valid command to the server
         n = write(sockfd, buffer, strlen(buffer));
         if (n < 0) error("ERROR writing to socket");
 
-        // Quit command issued by client
         if (strncmp(buffer, "quitc", 5) == 0) break;
 
-        // Print server's response
-        do {
-	    bzero(buffer, BUFFER_SIZE);
-	    n = read(sockfd, buffer, BUFFER_SIZE - 1);
-	    if (n > 0) {
-		printf("%s", buffer);  // Print server's response
-		if (strstr(buffer, "END") != NULL) { // Look for "END" in the response
-		    break; // Exit the reading loop when "END" is found
-		}
-	    }
-	} while (n > 0);
-
-
-        if (strcmp(buffer, "END") == 0) {
-            continue; // Prepare for next command
-        }
-
+        bzero(buffer, BUFFER_SIZE);
+        n = read(sockfd, buffer, BUFFER_SIZE - 1);
         if (n < 0 && errno != EAGAIN) error("ERROR reading from socket");
+        printf("%s", buffer); // Print server's response
+
+        if (strncmp(buffer, "redirect ", 9) == 0) { // Server sends "redirect <port>"
+            sscanf(buffer, "redirect %d", &portno);
+            close(sockfd); // Close the old connection
+            sockfd = socket(AF_INET, SOCK_STREAM, 0);
+            serv_addr.sin_port = htons(portno); // Update port number
+            if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) 
+                error("ERROR reconnecting");
         }
+    }
+
     close(sockfd);
     return 0;
 }
