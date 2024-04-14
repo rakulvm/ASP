@@ -17,9 +17,11 @@
 #include <ftw.h>  // For nftw
 #include <glob.h>   // For glob() function
 #include <utime.h>
+#include <errno.h>
+
 
 #define BUFFER_SIZE 256
-#define PORT_NO 2024
+#define PORT_NO 9001
 #define MAX_DIRS 512
 #ifndef DT_DIR
 #define DT_DIR 4
@@ -27,6 +29,11 @@
 
 
 #define MAX_MATCHING_FILES 1000 // Adjust based on expected server load and use case
+
+struct server_status {
+    int connection_count;
+} server_stat = {0};
+
 
 struct {
     char *files[MAX_MATCHING_FILES];
@@ -49,6 +56,13 @@ struct fileInfo {
     int found;
 } fileInfo;
 
+
+void redirect_connection(int sock_fd, int port) {
+    char redirect_msg[BUFFER_SIZE];
+    snprintf(redirect_msg, sizeof(redirect_msg), "redirecting: %d\n", port);
+    write(sock_fd, redirect_msg, strlen(redirect_msg));
+    close(sock_fd); // Close the connection after redirecting
+}
 
 // Error handling function
 void error(const char *msg) {
@@ -551,11 +565,15 @@ void crequest(int client_sock_fd) {
     char buffer[BUFFER_SIZE];
     while (1) {  // Infinite loop to handle client commands
         memset(buffer, 0, BUFFER_SIZE); 
-        if (read(client_sock_fd, buffer, BUFFER_SIZE - 1) < 0) error("ERROR reading from socket");
-
+        ssize_t n = read(client_sock_fd, buffer, BUFFER_SIZE - 1);
+        if (n < 0) {
+            perror("ERROR reading from socket");
+            break; // Break out of the loop and proceed to close the client socket
+        }
+        
         if (strncmp(buffer, "quitc", 5) == 0) {
             printf("Client has requested to close the connection.\n");
-            break;  // Exit loop and end child process
+            break; // Break out of the loop on "quitc" command
         }
 
         if (strncmp(buffer, "dirlist -a", 10) == 0) {
@@ -615,6 +633,7 @@ void signalHandler(int signum) {
     while(waitpid(-1, NULL, WNOHANG) > 0);
 }
 
+
 int main(void) {
     int sockfd, newsockfd;
     socklen_t clilen;
@@ -630,28 +649,35 @@ int main(void) {
     serv_addr.sin_addr.s_addr = INADDR_ANY;
     serv_addr.sin_port = htons(PORT_NO);
 
-    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) error("ERROR on binding");
+    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) 
+        error("ERROR on binding");
 
     listen(sockfd, 5);
     clilen = sizeof(cli_addr);
 
-    while (1) { // Main loop to accept connections
-        newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
-        if (newsockfd < 0) error("ERROR on accept");
+    while (1) {
+       newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
+        if (newsockfd < 0) {
+            if (errno == EINTR) {
+                continue; // Interrupted by signal, not an actual error, so continue
+            } else {
+                perror("ERROR on accept");
+                continue; // Log and continue for other types of errors
+            }
+        }
 
         pid_t pid = fork();
         if (pid < 0) error("ERROR on fork");
 
-        if (pid == 0) { // Child process
-            close(sockfd); // Close listening socket in child
-            crequest(newsockfd); // Handle client request
-            exit(0); // Exit child process when done
+        if (pid == 0) {
+            close(sockfd);
+            crequest(newsockfd);
+            exit(0);
         } else {
-            close(newsockfd); // Close connected socket in parent
+            close(newsockfd);
         }
-        write(newsockfd, "END", 3);
     }
-    close(sockfd); // This line is actually never reached
+    close(sockfd);
     return 0;
 }
 //server

@@ -17,7 +17,10 @@
 #include <ftw.h>  // For nftw
 #include <glob.h>   // For glob() function
 #include <utime.h>
+#include <errno.h>
 
+#define MIRROR1_PORT 8001
+#define MIRROR2_PORT 9001
 #define BUFFER_SIZE 256
 #define PORT_NO 2024
 #define MAX_DIRS 512
@@ -25,8 +28,14 @@
 #define DT_DIR 4
 #endif
 
+int connectionCount = 0; // Global connection counter
 
 #define MAX_MATCHING_FILES 1000 // Adjust based on expected server load and use case
+
+struct server_status {
+    int connection_count;
+} server_stat = {0};
+
 
 struct {
     char *files[MAX_MATCHING_FILES];
@@ -49,6 +58,13 @@ struct fileInfo {
     int found;
 } fileInfo;
 
+
+void redirect_connection(int sock_fd, int port) {
+    char redirect_msg[BUFFER_SIZE];
+    snprintf(redirect_msg, sizeof(redirect_msg), "redirecting: %d\n", port);
+    write(sock_fd, redirect_msg, strlen(redirect_msg));
+    close(sock_fd); // Close the connection after redirecting
+}
 
 // Error handling function
 void error(const char *msg) {
@@ -549,13 +565,17 @@ void packFilesByDateGreat(int client_sock_fd, const char *date) {
 
 void crequest(int client_sock_fd) {
     char buffer[BUFFER_SIZE];
-    while (1) {  // Infinite loop to handle client commands
+    while (1) {
         memset(buffer, 0, BUFFER_SIZE); 
-        if (read(client_sock_fd, buffer, BUFFER_SIZE - 1) < 0) error("ERROR reading from socket");
+        ssize_t n = read(client_sock_fd, buffer, BUFFER_SIZE - 1);
+        if (n < 0) {
+            perror("ERROR reading from socket");
+            break; // Break out of the loop and proceed to close the client socket
+        }  
 
-        if (strncmp(buffer, "quitc", 5) == 0) {
-            printf("Client has requested to close the connection.\n");
-            break;  // Exit loop and end child process
+       if (strncmp(buffer, "quitc", 5) == 0) {
+            printf("A Client has requested to close the connection.\n");
+            break; // Break out of the loop on "quitc" command
         }
 
         if (strncmp(buffer, "dirlist -a", 10) == 0) {
@@ -615,20 +635,17 @@ void signalHandler(int signum) {
     while(waitpid(-1, NULL, WNOHANG) > 0);
 }
 
+
 int main(void) {
     int sockfd, newsockfd;
     socklen_t clilen;
     struct sockaddr_in serv_addr, cli_addr;
-    static int connectionCount = 0; // Keep track of the number of connections
+    char redirectMessage[BUFFER_SIZE];
 
     signal(SIGCHLD, signalHandler); // To avoid zombie processes
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) error("ERROR opening socket");
-    
-    int optval = 1;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0)
-        error("setsockopt(SO_REUSEADDR) failed");
 
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
@@ -640,35 +657,48 @@ int main(void) {
     listen(sockfd, 5);
     clilen = sizeof(cli_addr);
 
-    while (1) {
+    while (1) { // Main loop to accept connections
         newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
-        if (newsockfd < 0) error("ERROR on accept");
-
-        connectionCount++; // Increment the connection counter
-        int serverToHandle = (connectionCount - 1) % 3; // This will cycle through 0, 1, 2
-
-        // For the first 9 connections (1-3 to serverw24, 4-6 to mirror1, 7-9 to mirror2)
-        // After that, alternate (10 to serverw24, 11 to mirror1, 12 to mirror2, and so on)
-        if (connectionCount <= 9) {
-            serverToHandle = (connectionCount - 1) / 3;
-        }
-
-        if (serverToHandle == 0) {
-            // This connection is handled by serverw24
-            pid_t pid = fork();
-            if (pid == 0) { // Child process
-                close(sockfd); // Close listening socket in child
-                crequest(newsockfd); // Handle client request
-                exit(0); // Exit child process when done
+        if (newsockfd < 0) {
+            if (errno == EINTR) {
+                continue; // Interrupted by signal, not an actual error, so continue
+            } else {
+                perror("ERROR on accept");
+                continue; // Log and continue for other types of errors
             }
-        } else {
-            // Redirect to the appropriate mirror based on serverToHandle
-            char mirrorMessage[BUFFER_SIZE];
-            int mirrorPort = serverToHandle == 1 ? 2025 : 2026; // Use 2025 for mirror1, 2026 for mirror2
-            snprintf(mirrorMessage, BUFFER_SIZE, "Please reconnect to mirror on port %d\n", mirrorPort);
-            write(newsockfd, mirrorMessage, strlen(mirrorMessage));
         }
-        close(newsockfd); // Close connected socket in parent
+
+        connectionCount++;
+        
+        if ((connectionCount > 3 && connectionCount <= 6)) { // Redirect to mirror1
+            snprintf(redirectMessage, BUFFER_SIZE, "redirect %d\n", MIRROR1_PORT);
+            write(newsockfd, redirectMessage, strlen(redirectMessage));
+            close(newsockfd);
+            continue;
+        } else if (connectionCount > 6 && connectionCount <= 9) { // Redirect to mirror2
+            snprintf(redirectMessage, BUFFER_SIZE, "redirect %d\n", MIRROR2_PORT);
+            write(newsockfd, redirectMessage, strlen(redirectMessage));
+            close(newsockfd);
+            continue;
+        } else if (connectionCount >= 10) {
+            // Alternating mechanism for redirecting to different mirrors
+            int port = (connectionCount % 3 == 1) ? PORT_NO : ((connectionCount % 3 == 2) ? MIRROR1_PORT : MIRROR2_PORT);
+            snprintf(redirectMessage, BUFFER_SIZE, "redirect %d\n", port);
+            write(newsockfd, redirectMessage, strlen(redirectMessage));
+            close(newsockfd);
+            continue;
+        }
+
+        pid_t pid = fork();
+        if (pid < 0) {
+            perror("ERROR on fork");
+        } else if (pid == 0) { // Child process
+            close(sockfd); // Close listening socket in child
+            crequest(newsockfd); // Handle client request
+            exit(0); // Child process exits after handling request
+        } else { // Parent process
+            close(newsockfd); // Parent closes the socket, no more "write" here
+        }
     }
     close(sockfd); // This line is actually never reached
     return 0;
