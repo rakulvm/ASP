@@ -76,7 +76,7 @@ int main(int argc, char *argv[]) {
 	}
 	
         if (!isValidCommand(buffer)) {
-            printf("Invalid command.\n");
+            printf("Invalid command, please check your command!.\n");
             continue;
         }
         

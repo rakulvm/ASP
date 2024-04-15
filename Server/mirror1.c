@@ -228,15 +228,15 @@ void packFilesByExtension(int client_sock_fd, const char *extensions) {
     // Check validation result and respond appropriately
     switch (validationResult) {
         case -1:
-            snprintf(notification, sizeof(notification), "Error: Duplicate file types provided.\n");
+            snprintf(notification, sizeof(notification), "Error: Duplicate file types provided.\nEND");
             write(client_sock_fd, notification, strlen(notification));
             return;
         case -2:
-            snprintf(notification, sizeof(notification), "Error: Number of extensions greater than the limit.\n");
+            snprintf(notification, sizeof(notification), "Error: Number of extensions greater than the limit.\nEND");
             write(client_sock_fd, notification, strlen(notification));
             return;
         case -3:
-            snprintf(notification, sizeof(notification), "Error: No file extensions provided.\n");
+            snprintf(notification, sizeof(notification), "Error: No file extensions provided.\nEND");
             write(client_sock_fd, notification, strlen(notification));
             return;
     }
@@ -279,7 +279,7 @@ void packFilesByExtension(int client_sock_fd, const char *extensions) {
     // Execute the command
     int result = system(command);
     if (result != 0) {
-        write(client_sock_fd, "Failed to find and pack files.\n", 30);
+        write(client_sock_fd, "Please check the tar file as the command takes time!.\nEND", 58);
         return;
     }
 
@@ -388,7 +388,7 @@ void packFilesBySize(int client_sock_fd, long size1, long size2) {
     // Execute the tar command
     status = system(tarCommand);
     if (status != 0) {
-        write(client_sock_fd, "Failed to pack files into tar.\n", 30);
+        write(client_sock_fd, "Please check the tar file as the command takes time!.\nEND", 58);
         return;
     }
 
@@ -472,7 +472,7 @@ void packFilesByDate(int client_sock_fd, const char *date) {
     // Execute the tar command
     status = system(tarCommand);
     if (status != 0) {
-        write(client_sock_fd, "Failed to pack files into tar.\n", 30);
+        write(client_sock_fd, "Please check the tar file as the command takes time!.\nEND", 58);
         return;
     }
 
@@ -513,7 +513,7 @@ void packFilesByDateGreat(int client_sock_fd, const char *date) {
     // Check if the date is in the future
     time_t current_time = time(NULL);
     if (difftime(given_time, current_time) > 0) {
-        write(client_sock_fd, "Error: Date is in the future.\n", 29);
+        write(client_sock_fd, "Error: Date is in the future.\nEND", 32);
         return;
     }
 
@@ -566,7 +566,7 @@ void packFilesByDateGreat(int client_sock_fd, const char *date) {
     // Execute the tar command
     status = system(tarCommand);
     if (status != 0) {
-        write(client_sock_fd, "Failed to pack files into tar.\n", 30);
+        write(client_sock_fd, "Please check the tar file as the command takes time!.\nEND", 58);
         return;
     }
 
@@ -586,7 +586,7 @@ void crequest(int client_sock_fd) {
             break; // Break out of the loop and proceed to close the client socket
         }
         if (strncmp(buffer, "quitc", 5) == 0) {
-            printf("Client has requested to close the connection.\n");
+            printf("Client has closed the connection.\n");
             break; // Break out of the loop on "quitc" command
         }
 
@@ -604,38 +604,71 @@ void crequest(int client_sock_fd) {
             packFilesByExtension(client_sock_fd, extensions);
         } else if (strncmp(buffer, "w24fz ", 6) == 0) {
             long size1, size2;
-            sscanf(buffer + 6, "%ld %ld", &size1, &size2); // Extract size1 and size2
-            if(size1 < size2) {
-                packFilesBySize(client_sock_fd, size1, size2);
-            } else {
-                write(client_sock_fd, "Error: size1 must be less than size2.\nEND", 38);
-            }
+            int numArgs = sscanf(buffer + 6, "%ld %ld", &size1, &size2); // Extract size1 and size2
+            if(numArgs == 2 && size1 < size2) {
+		packFilesBySize(client_sock_fd, size1, size2);
+	    } else {
+		const char *errorMsg = "Error: Please check the no of args (or) size1 is greater than size2 (or) enter only numbers!.\nEND";
+		write(client_sock_fd, errorMsg, strlen(errorMsg));
+	    }
         } else if (strncmp(buffer, "w24fdb ", 7) == 0) {
-            // Extract the date string from the command
-            char dateStr[BUFFER_SIZE];
-            strncpy(dateStr, buffer + 7, BUFFER_SIZE - 7);
+           // Extract the date string from the command
+	    char dateStr[BUFFER_SIZE];
+	    char extraArgCheck[BUFFER_SIZE];
+	    
+	    // Try to read one string after "w24fdb " and check for extra arguments
+	    int numArgs = sscanf(buffer + 7, "%s %s", dateStr, extraArgCheck);
 
-            // Validate the date format (YYYY-MM-DD)
-            struct tm date;
-            if (strptime(dateStr, "%Y-%m-%d", &date) == NULL) {
-                write(client_sock_fd, "Invalid date format.\nEND", 20);
-            } else {
-                // Call the function to pack files by date
-                packFilesByDate(client_sock_fd, dateStr);
-            }
+	    if (numArgs == 1) {
+		// Validate the date format (YYYY-MM-DD)
+		struct tm date;
+		memset(&date, 0, sizeof(struct tm)); // Initialize the structure to zero
+		char* endPtr = strptime(dateStr, "%Y-%m-%d", &date);
+
+		// Check if strptime consumed the entire date string and no extra characters are left
+		if (endPtr != NULL && *endPtr == '\0') {
+		    // Valid date, proceed to pack the files
+		    packFilesByDate(client_sock_fd, dateStr);
+		} else {
+		    // Invalid date format
+		    write(client_sock_fd, "Error: Invalid date format. Use YYYY-MM-DD.\nEND", 48);
+		}
+	    } else if (numArgs > 1) {
+		// Too many arguments
+		write(client_sock_fd, "Error: Too many arguments for w24fdb command.\nEND", 70);
+	    } else {
+		// Incorrect command format, no arguments provided
+		write(client_sock_fd, "Error: Incorrect format for w24fdb command. Use: w24fdb YYYY-MM-DD\nEND", 70);
+	    }
         } else if (strncmp(buffer, "w24fda ", 7) == 0) {
             // Extract the date string from the command
-            char dateStr[BUFFER_SIZE];
-            strncpy(dateStr, buffer + 7, BUFFER_SIZE - 7);
+	    char dateStr[BUFFER_SIZE];
+	    char extraArgCheck[BUFFER_SIZE];
+	    
+	    // Try to read one string after "w24fdb " and check for extra arguments
+	    int numArgs = sscanf(buffer + 7, "%s %s", dateStr, extraArgCheck);
 
-            // Validate the date format (YYYY-MM-DD)
-            struct tm date;
-            if (strptime(dateStr, "%Y-%m-%d", &date) == NULL) {
-                write(client_sock_fd, "Invalid date format.\nEND", 20);
-            } else {
-                // Call the function to pack files by date
-                packFilesByDateGreat(client_sock_fd, dateStr);
-            }
+	    if (numArgs == 1) {
+		// Validate the date format (YYYY-MM-DD)
+		struct tm date;
+		memset(&date, 0, sizeof(struct tm)); // Initialize the structure to zero
+		char* endPtr = strptime(dateStr, "%Y-%m-%d", &date);
+
+		// Check if strptime consumed the entire date string and no extra characters are left
+		if (endPtr != NULL && *endPtr == '\0') {
+		    // Valid date, proceed to pack the files
+		    packFilesByDateGreat(client_sock_fd, dateStr);
+		} else {
+		    // Invalid date format
+		    write(client_sock_fd, "Error: Invalid date format. Use YYYY-MM-DD.\nEND", 48);
+		}
+	    } else if (numArgs > 1) {
+		// Too many arguments
+		write(client_sock_fd, "Error: Too many arguments for w24fdb command.\nEND", 70);
+	    } else {
+		// Incorrect command format, no arguments provided
+		write(client_sock_fd, "Error: Incorrect format for w24fdb command. Use: w24fdb YYYY-MM-DD\nEND", 70);
+	    }
         } else {
             if (write(client_sock_fd, "Unsupported operation\nEND", 23) < 0) error("ERROR writing to socket");
         }
