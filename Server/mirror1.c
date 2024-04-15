@@ -292,7 +292,7 @@ void packFilesByExtension(int client_sock_fd, const char *extensions) {
 
     // Notify the client of successful tar file creation
     // char notification[BUFFER_SIZE];
-    snprintf(notification, sizeof(notification), "Files packed into %s\n", tarFilePath);
+    snprintf(notification, sizeof(notification), "Files packed into %s\nEND", tarFilePath);
     write(client_sock_fd, notification, strlen(notification));
 }
 
@@ -330,12 +330,12 @@ void sendFileInfo(int client_sock_fd, char *filename) {
             write(client_sock_fd, buffer, strlen(buffer));
         } else {
             // If stat fails after finding the file
-            snprintf(buffer, sizeof(buffer), "Error retrieving file info\n");
+            snprintf(buffer, sizeof(buffer), "Error retrieving file info\nEND");
             write(client_sock_fd, buffer, strlen(buffer));
         }
     } else {
         // If the file wasn't found
-        snprintf(buffer, sizeof(buffer), "File not found\n");
+        snprintf(buffer, sizeof(buffer), "File not found\nEND");
         write(client_sock_fd, buffer, strlen(buffer));
     }
 
@@ -394,7 +394,7 @@ void packFilesBySize(int client_sock_fd, long size1, long size2) {
 
     // Notify the client of successful tar file creation
     char notification[BUFFER_SIZE];
-    snprintf(notification, sizeof(notification), "Files packed into %s\n", tarFilePath);
+    snprintf(notification, sizeof(notification), "Files packed into %s\nEND", tarFilePath);
     write(client_sock_fd, notification, strlen(notification));
 }
 
@@ -478,7 +478,7 @@ void packFilesByDate(int client_sock_fd, const char *date) {
 
     // Notify the client of successful tar file creation
     char notification[BUFFER_SIZE];
-    snprintf(notification, sizeof(notification), "Files packed into %s\n", tarFilePath);
+    snprintf(notification, sizeof(notification), "Files packed into %s\nEND", tarFilePath);
     write(client_sock_fd, notification, strlen(notification));
 }
 
@@ -572,7 +572,7 @@ void packFilesByDateGreat(int client_sock_fd, const char *date) {
 
     // Notify the client of successful tar file creation
     char notification[BUFFER_SIZE];
-    snprintf(notification, sizeof(notification), "Files packed into %s\n", tarFilePath);
+    snprintf(notification, sizeof(notification), "Files packed into %s\nEND", tarFilePath);
     write(client_sock_fd, notification, strlen(notification));
 }
 
@@ -608,7 +608,7 @@ void crequest(int client_sock_fd) {
             if(size1 < size2) {
                 packFilesBySize(client_sock_fd, size1, size2);
             } else {
-                write(client_sock_fd, "Error: size1 must be less than size2.\n", 38);
+                write(client_sock_fd, "Error: size1 must be less than size2.\nEND", 38);
             }
         } else if (strncmp(buffer, "w24fdb ", 7) == 0) {
             // Extract the date string from the command
@@ -618,7 +618,7 @@ void crequest(int client_sock_fd) {
             // Validate the date format (YYYY-MM-DD)
             struct tm date;
             if (strptime(dateStr, "%Y-%m-%d", &date) == NULL) {
-                write(client_sock_fd, "Invalid date format.\n", 20);
+                write(client_sock_fd, "Invalid date format.\nEND", 20);
             } else {
                 // Call the function to pack files by date
                 packFilesByDate(client_sock_fd, dateStr);
@@ -631,13 +631,13 @@ void crequest(int client_sock_fd) {
             // Validate the date format (YYYY-MM-DD)
             struct tm date;
             if (strptime(dateStr, "%Y-%m-%d", &date) == NULL) {
-                write(client_sock_fd, "Invalid date format.\n", 20);
+                write(client_sock_fd, "Invalid date format.\nEND", 20);
             } else {
                 // Call the function to pack files by date
                 packFilesByDateGreat(client_sock_fd, dateStr);
             }
         } else {
-            if (write(client_sock_fd, "Unsupported operation\n", 23) < 0) error("ERROR writing to socket");
+            if (write(client_sock_fd, "Unsupported operation\nEND", 23) < 0) error("ERROR writing to socket");
         }
     }
     close(client_sock_fd);  // Close client socket when done

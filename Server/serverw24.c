@@ -103,7 +103,7 @@ void listDirectoriesByCreationTime(int client_sock_fd) {
 
     char *homeDir = getenv("HOME");
     if ((dir = opendir(homeDir)) == NULL) {
-        sendData(client_sock_fd, "Failed to open directory.\n");
+        sendData(client_sock_fd, "Failed to open directory.\nEND");
         return;
     }
 
@@ -142,7 +142,7 @@ void listDirectoriesAlphabetically(int client_sock_fd) {
     char buffer[BUFFER_SIZE];
 
     if ((dir = opendir(getenv("HOME"))) == NULL) {
-        sendData(client_sock_fd, "Failed to open directory.\n");
+        sendData(client_sock_fd, "Failed to open directory.\nEND");
         return;
     }
 
@@ -294,7 +294,7 @@ void packFilesByExtension(int client_sock_fd, const char *extensions) {
 
     // Notify the client of successful tar file creation
     // char notification[BUFFER_SIZE];
-    snprintf(notification, sizeof(notification), "Files packed into %s\n", tarFilePath);
+    snprintf(notification, sizeof(notification), "Files packed into %s\nEND", tarFilePath);
     write(client_sock_fd, notification, strlen(notification));
 }
 
@@ -332,12 +332,12 @@ void sendFileInfo(int client_sock_fd, char *filename) {
             write(client_sock_fd, buffer, strlen(buffer));
         } else {
             // If stat fails after finding the file
-            snprintf(buffer, sizeof(buffer), "Error retrieving file info\n");
+            snprintf(buffer, sizeof(buffer), "Error retrieving file info\nEND");
             write(client_sock_fd, buffer, strlen(buffer));
         }
     } else {
         // If the file wasn't found
-        snprintf(buffer, sizeof(buffer), "File not found\n");
+        snprintf(buffer, sizeof(buffer), "File not found\nEND");
         write(client_sock_fd, buffer, strlen(buffer));
     }
 
@@ -396,7 +396,7 @@ void packFilesBySize(int client_sock_fd, long size1, long size2) {
 
     // Notify the client of successful tar file creation
     char notification[BUFFER_SIZE];
-    snprintf(notification, sizeof(notification), "Files packed into %s\n", tarFilePath);
+    snprintf(notification, sizeof(notification), "Files packed into %s\nEND", tarFilePath);
     write(client_sock_fd, notification, strlen(notification));
 }
 
@@ -474,13 +474,13 @@ void packFilesByDate(int client_sock_fd, const char *date) {
     // Execute the tar command
     status = system(tarCommand);
     if (status != 0) {
-        write(client_sock_fd, "Failed to pack files into tar.\n", 30);
+        write(client_sock_fd, "Failed to pack files into tar.\nEND", 30);
         return;
     }
 
     // Notify the client of successful tar file creation
     char notification[BUFFER_SIZE];
-    snprintf(notification, sizeof(notification), "Files packed into %s\n", tarFilePath);
+    snprintf(notification, sizeof(notification), "Files packed into %s\nEND", tarFilePath);
     write(client_sock_fd, notification, strlen(notification));
 }
 
@@ -575,7 +575,7 @@ void packFilesByDateGreat(int client_sock_fd, const char *date) {
 
     // Notify the client of successful tar file creation
     char notification[BUFFER_SIZE];
-    snprintf(notification, sizeof(notification), "Files packed into %s\n", tarFilePath);
+    snprintf(notification, sizeof(notification), "Files packed into %s\nEND", tarFilePath);
     write(client_sock_fd, notification, strlen(notification));
 }
 
@@ -613,7 +613,7 @@ void crequest(int client_sock_fd) {
             if(size1 < size2) {
                 packFilesBySize(client_sock_fd, size1, size2);
             } else {
-                write(client_sock_fd, "Error: size1 must be less than size2.\n", 38);
+                write(client_sock_fd, "Error: size1 must be less than size2.\nEND", 38);
             }
         } else if (strncmp(buffer, "w24fdb ", 7) == 0) {
             // Extract the date string from the command
@@ -623,7 +623,7 @@ void crequest(int client_sock_fd) {
             // Validate the date format (YYYY-MM-DD)
             struct tm date;
             if (strptime(dateStr, "%Y-%m-%d", &date) == NULL) {
-                write(client_sock_fd, "Invalid date format.\n", 20);
+                write(client_sock_fd, "Invalid date format.\nEND", 20);
             } else {
                 // Call the function to pack files by date
                 packFilesByDate(client_sock_fd, dateStr);
@@ -636,13 +636,13 @@ void crequest(int client_sock_fd) {
             // Validate the date format (YYYY-MM-DD)
             struct tm date;
             if (strptime(dateStr, "%Y-%m-%d", &date) == NULL) {
-                write(client_sock_fd, "Invalid date format.\n", 20);
+                write(client_sock_fd, "Invalid date format.\nEND", 20);
             } else {
                 // Call the function to pack files by date
                 packFilesByDateGreat(client_sock_fd, dateStr);
             }
         } else {
-            if (write(client_sock_fd, "Unsupported operation\n", 23) < 0) error("ERROR writing to socket");
+            if (write(client_sock_fd, "Unsupported operation\nEND", 23) < 0) error("ERROR writing to socket");
         }
     }
     close(client_sock_fd);  // Close client socket when done
@@ -662,14 +662,14 @@ int main(void) {
     signal(SIGCHLD, signalHandler); // To avoid zombie processes
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) error("ERROR opening socket");
+    if (sockfd < 0) error("ERROR opening socket\nEND");
 
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = INADDR_ANY;
     serv_addr.sin_port = htons(PORT_NO);
 
-    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) error("ERROR on binding");
+    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) error("ERROR on binding\nEND");
 
     listen(sockfd, 5);
     clilen = sizeof(cli_addr);
