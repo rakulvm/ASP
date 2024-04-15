@@ -699,7 +699,16 @@ int main(void) {
             continue;
         } else if (connectionCount >= 10) {
             // Alternating mechanism for redirecting to different mirrors
-            int port = (connectionCount % 3 == 1) ? PORT_NO : ((connectionCount % 3 == 2) ? MIRROR1_PORT : MIRROR2_PORT);
+           // int port = (connectionCount % 3 == 1) ? PORT_NO : ((connectionCount % 3 == 2) ? MIRROR1_PORT : MIRROR2_PORT);
+            int port;
+            int roundRobin = (connectionCount - 10) % 3;
+           	if (roundRobin == 0) {
+            	    port = PORT_NO; // serverw24
+		} else if (roundRobin == 1) {
+		    port = MIRROR1_PORT; // mirror1
+		} else {
+		    port = MIRROR2_PORT; // mirror2
+		}
             snprintf(redirectMessage, BUFFER_SIZE, "redirect %d\n", port);
             write(newsockfd, redirectMessage, strlen(redirectMessage));
             close(newsockfd);
