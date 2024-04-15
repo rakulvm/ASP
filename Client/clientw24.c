@@ -34,64 +34,108 @@ int isValidCommand(const char *cmd) {
 }
 
 int main(int argc, char *argv[]) {
-    int sockfd, portno = DEFAULT_PORT, n;
+    int sockfd, portno = DEFAULT_PORT;
     struct sockaddr_in serv_addr;
     struct hostent *server;
     char buffer[BUFFER_SIZE];
-    char *hostname = "localhost"; // Default to localhost if not specified
-
-    if (argc > 1) {
-        hostname = argv[1];
-    }
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) error("ERROR opening socket");
 
-    server = gethostbyname(hostname);
+    server = gethostbyname("localhost");
     if (server == NULL) {
-        fprintf(stderr,"ERROR, no such host\n");
-        exit(1);
+        fprintf(stderr, "ERROR, no such host\n");
+        exit(0);
     }
 
-    bzero((char *)&serv_addr, sizeof(serv_addr));
+    bzero((char *) &serv_addr, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
-    bcopy((char *)server->h_addr, (char *)&serv_addr.sin_addr.s_addr, server->h_length);
+    bcopy((char *)server->h_addr, 
+         (char *)&serv_addr.sin_addr.s_addr,
+         server->h_length);
     serv_addr.sin_port = htons(portno);
 
-    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) 
+    if (connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) 
         error("ERROR connecting");
 
+    // Declare a variable to store the last command
+    char lastCommand[BUFFER_SIZE] = {0};
     while (1) {
         printf("$clientw24: ");
         bzero(buffer, BUFFER_SIZE);
         fgets(buffer, BUFFER_SIZE - 1, stdin);
-        buffer[strcspn(buffer, "\n")] = 0;
-
+        buffer[strcspn(buffer, "\n")] = '\0'; // remove newline
+	
+	// Check for the quit command
+        if (strncmp(buffer, "quitc", 5) == 0) {
+	    printf("Quitting client.\n");
+	    if (write(sockfd, "quitc", 5) < 0) // Send quitc command to the server
+		error("ERROR writing quit to socket");
+	    close(sockfd); // Close the socket immediately
+	    exit(0); // Exit the client program
+	}
+	
         if (!isValidCommand(buffer)) {
             printf("Invalid command.\n");
             continue;
         }
+        
+        strncpy(lastCommand, buffer, BUFFER_SIZE);
 
-        n = write(sockfd, buffer, strlen(buffer));
-        if (n < 0) error("ERROR writing to socket");
+        // Write the command to the server
+        if (write(sockfd, buffer, strlen(buffer)) < 0) 
+            error("ERROR writing to socket");
 
-        if (strncmp(buffer, "quitc", 5) == 0) break;
-
+        do {
+        // Read the server's response
         bzero(buffer, BUFFER_SIZE);
-        n = read(sockfd, buffer, BUFFER_SIZE - 1);
-        if (n < 0 && errno != EAGAIN) error("ERROR reading from socket");
-        printf("%s", buffer); // Print server's response
-
-        if (strncmp(buffer, "redirect ", 9) == 0) { // Server sends "redirect <port>"
-            sscanf(buffer, "redirect %d", &portno);
-            close(sockfd); // Close the old connection
-            sockfd = socket(AF_INET, SOCK_STREAM, 0);
-            serv_addr.sin_port = htons(portno); // Update port number
-            if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) 
-                error("ERROR reconnecting");
+        ssize_t n = read(sockfd, buffer, BUFFER_SIZE - 1);
+	
+	if (n < 0) {
+		error("ERROR reading from socket");
+        } else if (n == 0) {
+		// No response from server, possibly the server closed the connection
+		printf("Server closed the connection.\n");
+		close(sockfd);
+		exit(1);
         }
+        // buffer[n] = '\0';
+
+        // Check for redirect response
+        if (strncmp(buffer, "redirect", 8) == 0) {
+            int new_port;
+            sscanf(buffer, "redirect %d", &new_port);
+            printf("Redirecting to port %d\n", new_port);
+            close(sockfd);
+
+            // Create a new socket and connect to the new port
+            sockfd = socket(AF_INET, SOCK_STREAM, 0);
+            if (sockfd < 0) error("ERROR opening socket");
+
+            serv_addr.sin_port = htons(new_port);
+            if (connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) 
+                error("ERROR connecting");
+	    
+	    // After connecting to the new port, resend the last command
+            if (write(sockfd, lastCommand, strlen(lastCommand)) < 0) {
+                error("ERROR writing to socket after redirect");
+            }
+	    
+            continue;  
+        }
+        
+        buffer[n] = '\0'; 
+
+        printf("%s\n", buffer); // Print the response
+        
+        } while (strstr(buffer, "END") == NULL);
+        
+        /*if (strncmp(lastCommand, "quitc", 5) != 0) {
+    	printf("$clientw24: ");
+	}*/
+
     }
 
-    close(sockfd);
+    close(sockfd); // Close the socket
     return 0;
 }

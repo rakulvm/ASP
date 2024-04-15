@@ -510,6 +510,13 @@ void packFilesByDateGreat(int client_sock_fd, const char *date) {
     strptime(date, "%Y-%m-%d", &given_date);
     time_t given_time = mktime(&given_date);
 
+    // Check if the date is in the future
+    time_t current_time = time(NULL);
+    if (difftime(given_time, current_time) > 0) {
+        write(client_sock_fd, "Error: Date is in the future.\n", 29);
+        return;
+    }
+
     // Execute the find command and write the file names to fileListPath
     char findCommand[BUFFER_SIZE * 3];
     snprintf(findCommand, sizeof(findCommand), "find ~ -type f -printf '%%T@ %%p\\n'");
@@ -541,6 +548,15 @@ void packFilesByDateGreat(int client_sock_fd, const char *date) {
     fclose(fileList);
     pclose(fp);
 
+    // Check if fileListPath is empty
+    struct stat fileStat;
+    if (stat(fileListPath, &fileStat) == 0 && fileStat.st_size == 0) {
+        unlink(tarFilePath);
+        unlink(fileListPath);
+        write(client_sock_fd, "No files found for the specified date.\n", 39);
+        return;
+    }
+
     // Prepare the tar command
     char tarCommand[BUFFER_SIZE * 3];
     snprintf(tarCommand, sizeof(tarCommand),
@@ -560,7 +576,6 @@ void packFilesByDateGreat(int client_sock_fd, const char *date) {
     write(client_sock_fd, notification, strlen(notification));
 }
 
-
 void crequest(int client_sock_fd) {
     char buffer[BUFFER_SIZE];
     while (1) {  // Infinite loop to handle client commands
@@ -570,7 +585,6 @@ void crequest(int client_sock_fd) {
             perror("ERROR reading from socket");
             break; // Break out of the loop and proceed to close the client socket
         }
-        
         if (strncmp(buffer, "quitc", 5) == 0) {
             printf("Client has requested to close the connection.\n");
             break; // Break out of the loop on "quitc" command
