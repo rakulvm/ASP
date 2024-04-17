@@ -26,6 +26,9 @@
 #define BUFFER_SIZE 256
 #define PORT_NO 2024
 #define MAX_DIRS 512
+#ifndef DT_DIR
+#define DT_DIR 4
+#endif
 
 int connectionCount = 1; //this is to redirect the connection according to the rule for redirection
 
@@ -468,7 +471,7 @@ void packFilesByDateGreat(int client_sock_fd, const char *date) {
 
     time_t current_time = time(NULL);
     if (difftime(given_time, current_time) > 0) {
-        write(client_sock_fd, "Error: Date is in the future.\nEND", 33);
+        write(client_sock_fd, "Error: Date is in the future.\nEND", 34);
         return;
     }
 

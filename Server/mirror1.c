@@ -23,6 +23,9 @@
 #define BUFFER_SIZE 256
 #define PORT_NO 8001
 #define MAX_DIRS 512
+#ifndef DT_DIR
+#define DT_DIR 4
+#endif
 
 #define MAX_MATCHING_FILES 1000
 
@@ -272,7 +275,7 @@ void packFilesByExtension(int client_sock_fd, const char *extensions) {
 }
 
 /*This is a helper function for sendFileInfo which we use to get the information about the file using nftw.*/
-static int file_info(const char *fpath, the struct stat *sb, int typeflag, struct FTW *ftwbuf) {
+static int file_info(const char *fpath, struct stat *sb, int typeflag, struct FTW *ftwbuf) {
     if (typeflag == FTW_F) {
         if (strcmp(fpath + ftwbuf->base, fileInfo.path) == 0) {
             fileInfo.found = 1;
@@ -461,7 +464,7 @@ void packFilesByDateGreat(int client_sock_fd, const char *date) {
 
     time_t current_time = time(NULL);
     if (difftime(given_time, current_time) > 0) {
-        write(client_sock_fd, "Error: Date is in the future.\nEND", 33);
+        write(client_sock_fd, "Error: Date is in the future.\nEND", 34);
         return;
     }
 
